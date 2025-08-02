@@ -1,0 +1,6 @@
+{
+  "description": "A Farcaster mini-app implementation of the classic 2048 game.",
+  "prompt": "build me a 2048 farcaster mini game based on this guide https://miniapps.farcaster.xyz/llms-full.txt",
+  "requestFramePermissions": [],
+  "name": "Farcaster mini app"
+}
