@@ -1,40 +1,54 @@
-import React, { useState, useEffect, useCallback } from 'react';
+
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { createRoot } from 'react-dom/client';
 
 const TILE_COUNT = 4;
 const BEST_SCORE_KEY = 'bestScore2048';
 
-const getTileStyle = (value) => {
-  const power = Math.log2(value);
+interface TileData {
+  value: number;
+  x: number;
+  y: number;
+  id: number;
+  isNew: boolean;
+  isMerged: boolean;
+}
+
+const getTileStyle = (value: number) => {
   const background = `var(--color-${value > 2048 ? 'super' : value}, #3c3a32)`;
   const color = `var(--text-${value > 2048 ? 'super' : value}, #f9f6f2)`;
   const fontSize = value > 1000 ? '36px' : value > 100 ? '40px' : '48px';
   return { background, color, fontSize };
 };
 
-const Tile = ({ value, x, y }) => {
+const Tile = ({ value, x, y, isNew, isMerged }: TileData) => {
   if (!value) return null;
-  const style = {
-    ...getTileStyle(value),
+  const tileStyle = getTileStyle(value);
+  const transformStyle = {
     transform: `translate(calc(${x} * (var(--tile-size) + var(--grid-gap))), calc(${y} * (var(--tile-size) + var(--grid-gap))))`,
   };
-  return <div className="tile" style={style}>{value}</div>;
+  
+  let className = 'tile';
+  if (isNew) className += ' tile-new';
+  if (isMerged) className += ' tile-merged';
+
+  return <div className={className} style={{...tileStyle, ...transformStyle}}>{value}</div>;
 };
 
-const GameBoard = ({ board }) => {
+const GameBoard = ({ board }: { board: TileData[] }) => {
   return (
     <div className="game-board">
       {Array.from({ length: TILE_COUNT * TILE_COUNT }).map((_, i) => (
         <div key={i} className="grid-cell" />
       ))}
       {board.map((tile) => (
-        <Tile key={tile.id} value={tile.value} x={tile.x} y={tile.y} />
+        <Tile key={tile.id} {...tile} />
       ))}
     </div>
   );
 };
 
-const GameOverlay = ({ onRestart, isWin }) => (
+const GameOverlay = ({ onRestart, isWin }: { onRestart: () => void; isWin: boolean }) => (
     <div className="game-overlay">
         <h2>{isWin ? 'You Win!' : 'Game Over!'}</h2>
         <button className="new-game-button" onClick={onRestart}>Try Again</button>
@@ -43,54 +57,55 @@ const GameOverlay = ({ onRestart, isWin }) => (
 
 
 const App = () => {
-  const [board, setBoard] = useState([]);
+  const [board, setBoard] = useState<TileData[]>([]);
   const [score, setScore] = useState(0);
   const [bestScore, setBestScore] = useState(() => parseInt(localStorage.getItem(BEST_SCORE_KEY) || '0'));
   const [isGameOver, setIsGameOver] = useState(false);
   const [isWin, setIsWin] = useState(false);
-  const [touchStart, setTouchStart] = useState(null);
+  const [touchStart, setTouchStart] = useState<{ x: number, y: number } | null>(null);
+  const idCounter = useRef(1);
 
-  const createInitialBoard = () => {
-    let newBoard = Array.from({ length: TILE_COUNT }, () =>
-      Array(TILE_COUNT).fill(0)
-    );
-    newBoard = addRandomTile(newBoard);
-    newBoard = addRandomTile(newBoard);
-    return transformToTileObjects(newBoard);
+  const transformToTileObjects = (grid: number[][], animationData: { newTilePos?: { r: number, c: number } | null, mergedCells?: Set<string> } = {}): TileData[] => {
+    const { newTilePos, mergedCells } = animationData;
+    const tiles: TileData[] = [];
+    for (let r = 0; r < TILE_COUNT; r++) {
+      for (let c = 0; c < TILE_COUNT; c++) {
+        const value = grid[r][c];
+        if (value !== 0) {
+          const isNew = !!(newTilePos && newTilePos.r === r && newTilePos.c === c);
+          const isMerged = !!(mergedCells && mergedCells.has(`${r},${c}`));
+          tiles.push({ value, x: c, y: r, id: idCounter.current++, isNew, isMerged });
+        }
+      }
+    }
+    return tiles;
+  };
+
+  const createInitialBoard = (): TileData[] => {
+    let newGrid: number[][] = Array.from({ length: TILE_COUNT }, () => Array(TILE_COUNT).fill(0));
+    newGrid = addRandomTile(newGrid);
+    newGrid = addRandomTile(newGrid);
+    return transformToTileObjects(newGrid);
   };
   
   const startGame = useCallback(() => {
+    idCounter.current = 1;
     setBoard(createInitialBoard());
     setScore(0);
     setIsGameOver(false);
     setIsWin(false);
   }, []);
 
-  const transformToTileObjects = (grid) => {
-    const tiles = [];
-    let idCounter = 1;
-    for (let r = 0; r < TILE_COUNT; r++) {
-      for (let c = 0; c < TILE_COUNT; c++) {
-        if (grid[r][c] !== 0) {
-          tiles.push({ value: grid[r][c].value || grid[r][c], x: c, y: r, id: idCounter++ });
-        }
-      }
-    }
-    return tiles;
-  };
-  
-  const getGrid = () => {
-    const grid = Array.from({ length: TILE_COUNT }, () =>
-      Array(TILE_COUNT).fill(0)
-    );
+  const getGrid = (): number[][] => {
+    const grid: number[][] = Array.from({ length: TILE_COUNT }, () => Array(TILE_COUNT).fill(0));
     board.forEach(tile => {
       grid[tile.y][tile.x] = tile.value;
     });
     return grid;
   };
 
-  const addRandomTile = (grid) => {
-    const emptyCells = [];
+  const addRandomTile = (grid: number[][]): number[][] => {
+    const emptyCells: { r: number, c: number }[] = [];
     for (let r = 0; r < TILE_COUNT; r++) {
       for (let c = 0; c < TILE_COUNT; c++) {
         if (grid[r][c] === 0) {
@@ -105,39 +120,59 @@ const App = () => {
     return grid;
   };
 
-  const move = useCallback((direction) => {
-    if (isGameOver && !isWin) return;
-    
-    let currentGrid = getGrid();
-    let scoreToAdd = 0;
-    let moved = false;
-    
-    const rotate = (grid) => {
-      const newGrid = Array.from({ length: TILE_COUNT }, () => Array(TILE_COUNT).fill(0));
-      for (let r = 0; r < TILE_COUNT; r++) {
-        for (let c = 0; c < TILE_COUNT; c++) {
-          newGrid[r][c] = grid[TILE_COUNT - 1 - c][r];
+  const findNewTilePos = (oldGrid: number[][], newGrid: number[][]): { r: number, c: number } | null => {
+    for (let r = 0; r < TILE_COUNT; r++) {
+      for (let c = 0; c < TILE_COUNT; c++) {
+        if (oldGrid[r][c] === 0 && newGrid[r][c] !== 0) {
+          return { r, c };
         }
       }
-      return newGrid;
+    }
+    return null;
+  }
+
+  type Direction = 'up' | 'down' | 'left' | 'right';
+
+  const move = useCallback((direction: Direction) => {
+    if (isGameOver && !isWin) return;
+    
+    let currentGrid: number[][] = getGrid();
+    let scoreToAdd = 0;
+    let moved = false;
+    const mergedCells = new Set<string>();
+    
+    const rotate = (grid: any[][], times: number): any[][] => {
+      let g = grid;
+      for (let i = 0; i < times; i++) {
+        const newGrid = Array.from({ length: TILE_COUNT }, () => Array(TILE_COUNT).fill(0));
+        for (let r = 0; r < TILE_COUNT; r++) {
+          for (let c = 0; c < TILE_COUNT; c++) {
+            newGrid[r][c] = g[TILE_COUNT - 1 - c][r];
+          }
+        }
+        g = newGrid;
+      }
+      return g;
     };
     
-    // Rotate board to always handle move left
-    const rotations = { 'up': 1, 'right': 2, 'down': 3, 'left': 0 };
-    for (let i = 0; i < rotations[direction]; i++) {
-        currentGrid = rotate(currentGrid);
-    }
+    const rotations: Record<Direction, number> = { 'up': 1, 'right': 2, 'down': 3, 'left': 0 };
+    const numRotations = rotations[direction];
+    currentGrid = rotate(currentGrid, numRotations);
 
     for (let r = 0; r < TILE_COUNT; r++) {
       const row = currentGrid[r].filter(cell => cell !== 0);
-      const newRow = [];
+      const newRow: number[] = [];
       for (let i = 0; i < row.length; i++) {
         if (i + 1 < row.length && row[i] === row[i + 1]) {
           const newValue = row[i] * 2;
           newRow.push(newValue);
           scoreToAdd += newValue;
           if (newValue === 2048) setIsWin(true);
-          i++; // Skip next tile
+          
+          // Track merged cell position
+          const unrotated = rotate([ [r, newRow.length - 1] ], (4-numRotations)%4 )[0];
+          mergedCells.add(`${unrotated[0]},${unrotated[1]}`);
+          i++;
         } else {
           newRow.push(row[i]);
         }
@@ -150,29 +185,30 @@ const App = () => {
       currentGrid[r] = paddedRow;
     }
 
-    // Rotate back
-    for (let i = 0; i < (4 - rotations[direction]) % 4; i++) {
-        currentGrid = rotate(currentGrid);
-    }
+    currentGrid = rotate(currentGrid, (4 - numRotations) % 4);
     
     if (moved) {
-      currentGrid = addRandomTile(currentGrid);
-      setBoard(transformToTileObjects(currentGrid));
-      setScore(s => s + scoreToAdd);
-      if (score + scoreToAdd > bestScore) {
-          setBestScore(score + scoreToAdd);
-          localStorage.setItem(BEST_SCORE_KEY, (score + scoreToAdd).toString());
+      const gridBeforeAddingTile = JSON.parse(JSON.stringify(currentGrid));
+      const gridWithNewTile = addRandomTile(currentGrid);
+      const newTilePos = findNewTilePos(gridBeforeAddingTile, gridWithNewTile);
+
+      setBoard(transformToTileObjects(gridWithNewTile, { newTilePos, mergedCells }));
+      const newScore = score + scoreToAdd;
+      setScore(newScore);
+      if (newScore > bestScore) {
+          setBestScore(newScore);
+          localStorage.setItem(BEST_SCORE_KEY, newScore.toString());
       }
-      checkGameOver(currentGrid);
+      checkGameOver(gridWithNewTile);
     }
   }, [board, score, bestScore, isGameOver, isWin]);
 
-  const checkGameOver = (grid) => {
+  const checkGameOver = (grid: number[][]) => {
     for (let r = 0; r < TILE_COUNT; r++) {
         for (let c = 0; c < TILE_COUNT; c++) {
-            if (grid[r][c] === 0) return; // empty cell
-            if (r < TILE_COUNT - 1 && grid[r][c] === grid[r + 1][c]) return; // can move down
-            if (c < TILE_COUNT - 1 && grid[r][c] === grid[r][c + 1]) return; // can move right
+            if (grid[r][c] === 0) return;
+            if (r < TILE_COUNT - 1 && grid[r][c] === grid[r + 1][c]) return;
+            if (c < TILE_COUNT - 1 && grid[r][c] === grid[r][c + 1]) return;
         }
     }
     setIsGameOver(true);
@@ -182,8 +218,8 @@ const App = () => {
     startGame();
   }, [startGame]);
   
-  const handleKeyDown = useCallback((e) => {
-    const keyMap = {
+  const handleKeyDown = useCallback((e: KeyboardEvent) => {
+    const keyMap: Record<string, Direction> = {
       'ArrowUp': 'up', 'ArrowDown': 'down', 'ArrowLeft': 'left', 'ArrowRight': 'right',
       'w': 'up', 's': 'down', 'a': 'left', 'd': 'right'
     };
@@ -198,11 +234,12 @@ const App = () => {
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [handleKeyDown]);
 
-  const handleTouchStart = (e) => {
+  const handleTouchStart = (e: React.TouchEvent<HTMLDivElement>) => {
+    if (e.touches.length > 1) return;
     setTouchStart({ x: e.touches[0].clientX, y: e.touches[0].clientY });
   };
   
-  const handleTouchEnd = (e) => {
+  const handleTouchEnd = (e: React.TouchEvent<HTMLDivElement>) => {
     if (!touchStart) return;
     const dx = e.changedTouches[0].clientX - touchStart.x;
     const dy = e.changedTouches[0].clientY - touchStart.y;
@@ -210,14 +247,14 @@ const App = () => {
     const absDy = Math.abs(dy);
 
     if (Math.max(absDx, absDy) > 30) { // threshold
-      const direction = absDx > absDy ? (dx > 0 ? 'right' : 'left') : (dy > 0 ? 'down' : 'up');
+      const direction: Direction = absDx > absDy ? (dx > 0 ? 'right' : 'left') : (dy > 0 ? 'down' : 'up');
       move(direction);
     }
     setTouchStart(null);
   };
 
   return (
-    <div onTouchStart={handleTouchStart} onTouchEnd={handleTouchEnd}>
+    <div className="container" onTouchStart={handleTouchStart} onTouchEnd={handleTouchEnd} onTouchCancel={() => setTouchStart(null)}>
         <div className="header">
             <h1>2048</h1>
             <div className="scores-container">
@@ -231,8 +268,10 @@ const App = () => {
                 </div>
             </div>
         </div>
-        <button className="new-game-button" onClick={startGame}>New Game</button>
-        <div style={{ position: 'relative' }}>
+        <div className="controls">
+            <button className="new-game-button" onClick={startGame}>New Game</button>
+        </div>
+        <div className="game-container">
           {(isGameOver || isWin) && <GameOverlay onRestart={startGame} isWin={isWin} />}
           <GameBoard board={board} />
         </div>
@@ -241,5 +280,7 @@ const App = () => {
 };
 
 const container = document.getElementById('root');
-const root = createRoot(container);
-root.render(<App />);
+if (container) {
+  const root = createRoot(container);
+  root.render(<App />);
+}
